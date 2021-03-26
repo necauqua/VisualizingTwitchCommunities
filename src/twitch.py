@@ -1,35 +1,56 @@
 import asyncio
 import logging
-import sys
+import math
 
 logger = logging.getLogger('twitch')
 
+TWITCH_PAGE_SIZE = 100
+
 
 # Gets the count top streams currently live on twitch
-async def get_top_streamers(session, credentials, count=100):
+async def get_top_streamers(session, credentials, count=20):
     """
     Gets the `count` top streams currently live on twitch.
 
-    Maximum allowed Twitch value is 100.
+    This endpoint is paginated, so it would make `ceil(count / 100)`
+    sequential requests, which can get slow pretty fast.
+
+    Due to obvious races the return can contain duplicates at page borders,
+    this method does not check for that.
+
+    Also can sometimes return slightly less than the requested count due
+    to Twitch being weird and just returning slightly less sometimes.
     """
 
     logger.info('Getting top %d live streams from Twitch', count)
 
-    token = credentials['access-token']
+    headers = {
+        'Client-ID': credentials['client-id'],
+        'Authorization': f"Bearer {credentials['access-token']}",
+    }
 
-    # check for token sanity
-    if token == 'demo':
-        logger.error('Please specify your access token in the credentials.json file')
-        sys.exit(1)
+    result = []
+    cursor = ''
 
-    # Header auth values taken from twitchtokengenerator.com, not sure what to do if they break
-    headers = {'Client-ID': credentials['client-id'], 'Authorization': f"Bearer {token}"}
+    while count != 0:
+        batch = min(count, TWITCH_PAGE_SIZE)
+        url = f'https://api.twitch.tv/helix/streams?first={batch}&after={cursor}'
+        count -= batch
 
-    # Request top `count` viewed streams on twitch
-    async with session.get(f'https://api.twitch.tv/helix/streams?first={count}', headers=headers) as response:
-        data = await response.json()
-        # Return a list of streamers
-        return [element['user_login'] for element in data['data']]
+        logger.debug(f'Requesting a batch of {batch} top streamers, {math.ceil(count / TWITCH_PAGE_SIZE)} batches left')
+
+        async with session.get(url, headers=headers) as response:
+            data = await response.json()
+
+            # only error responses have a message field in them
+            if msg := data.get('message'):
+                raise Exception(msg)
+
+            cursor = data['pagination']['cursor']
+
+            result.extend(element['user_login'] for element in data['data'])
+
+    return result
 
 
 async def get_current_viewers(session, channel):

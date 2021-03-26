@@ -13,6 +13,11 @@ async def main():
     with open('credentials.json') as f:
         cr = json.load(f)
 
+        # check for token sanity
+        if cr['access-token'] == 'demo':
+            print('ERROR: Please specify your access token in the credentials.json file', file=sys.stderr)
+            sys.exit(1)
+
     async with aiohttp.ClientSession() as session:
         streamers = await twitch.get_top_streamers(session, cr)
         viewer_map = await twitch.get_viewer_map(session, streamers)
